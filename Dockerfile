@@ -1,7 +1,7 @@
 ARG GO_IMAGE=golang:1.24-bookworm
 FROM ${GO_IMAGE} AS build
 
-ARG VERSION=0.1.4
+ARG VERSION=0.1.5
 ARG TARGET_GOARCH=arm64
 WORKDIR /src
 COPY go.mod ./

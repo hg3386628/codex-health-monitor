@@ -440,6 +440,85 @@ func TestHistoryIsCappedAtOneHundredRuns(t *testing.T) {
 	}
 }
 
+func setAuthFileDisabled(t *testing.T, host *fakeHost, authIndex string, disabled bool) {
+	t.Helper()
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	for index := range host.files {
+		if host.files[index].AuthIndex == authIndex {
+			host.files[index].Disabled = disabled
+		}
+	}
+}
+
+func viewByAuthIndex(views []AccountView, authIndex string) AccountView {
+	for _, view := range views {
+		if view.AuthIndex == authIndex {
+			return view
+		}
+	}
+	return AccountView{}
+}
+
+func TestAccountsViewReconcilesDisabledState(t *testing.T) {
+	host := &fakeHost{
+		files: []AuthFile{
+			{AuthIndex: "idx-1", Type: "codex", Email: "one@example.com"},
+			{AuthIndex: "idx-2", Type: "codex", Email: "two@example.com", Disabled: true},
+		},
+		auth: map[string]json.RawMessage{
+			"idx-1": authJSON(1, "account-1"),
+			"idx-2": authJSON(2, "account-2"),
+		},
+	}
+	runtime := newConfiguredRuntime(t, host)
+	record := waitForRun(t, runtime)
+	if record.Total != 2 || record.Healthy != 1 || record.Unhealthy != 1 {
+		t.Fatalf("unexpected run record: %+v", record)
+	}
+
+	// Re-enable idx-2 in CPA: the stale disabled result from the last run must
+	// be retracted without waiting for the next scheduled check.
+	setAuthFileDisabled(t, host, "idx-2", false)
+	views, err := runtime.Accounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view := viewByAuthIndex(views, "idx-2"); view.Status != "not_checked" || view.Healthy || !view.CheckedAt.IsZero() {
+		t.Fatalf("re-enabled view = %+v, want not_checked with retracted result", view)
+	}
+	if view := viewByAuthIndex(views, "idx-1"); view.Status != "healthy" || !view.Healthy {
+		t.Fatalf("healthy view = %+v", view)
+	}
+
+	// Disabling an account flips its view to disabled immediately, even when
+	// the last run reported it healthy.
+	setAuthFileDisabled(t, host, "idx-1", true)
+	views, err = runtime.Accounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view := viewByAuthIndex(views, "idx-1"); view.Status != "disabled" || view.Healthy || view.ErrorCode != "credential_disabled" {
+		t.Fatalf("disabled view = %+v", view)
+	}
+
+	// After re-enabling and running again both accounts reflect current state.
+	setAuthFileDisabled(t, host, "idx-1", false)
+	record = waitForRun(t, runtime)
+	if record.Healthy != 2 {
+		t.Fatalf("expected both accounts healthy after re-enabling, got %+v", record)
+	}
+	views, err = runtime.Accounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, view := range views {
+		if view.Status != "healthy" || !view.Healthy {
+			t.Fatalf("view = %+v, want healthy", view)
+		}
+	}
+}
+
 func TestManagementRegistrationAndRoutes(t *testing.T) {
 	registration := managementRegistrationPayload()
 	if len(registration.Routes) != 6 || len(registration.Resources) != 1 {

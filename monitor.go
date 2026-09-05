@@ -1034,6 +1034,27 @@ func (r *Runtime) Accounts() ([]AccountView, error) {
 			view.ErrorCode = result.ErrorCode
 			view.ErrorMessage = result.ErrorMessage
 		}
+		if view.Disabled {
+			// The credential is disabled or unavailable in CPA right now, so
+			// reflect that immediately instead of a possibly stale check result.
+			view.Status = "disabled"
+			view.Healthy = false
+			view.HTTPStatus = 0
+			view.LatencyMS = 0
+			view.ErrorCode = "credential_disabled"
+			view.ErrorMessage = "Credential is disabled or unavailable in CPA."
+		} else if view.Status == "disabled" {
+			// The last check ran while the credential was disabled, but it has
+			// been re-enabled since. That result no longer reflects reality,
+			// so retract it until the next run probes the credential again.
+			view.Status = "not_checked"
+			view.Healthy = false
+			view.HTTPStatus = 0
+			view.LatencyMS = 0
+			view.CheckedAt = time.Time{}
+			view.ErrorCode = ""
+			view.ErrorMessage = ""
+		}
 		views = append(views, view)
 	}
 	return views, nil

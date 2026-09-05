@@ -553,8 +553,9 @@ function renderSchedule(data){
 
 function renderSummary(status,accounts){
   const total=accounts.length;
-  const healthy=Number(status.healthy)||0;
-  const unhealthy=Number(status.unhealthy)||0;
+  const healthy=accounts.filter(account=>account.healthy).length;
+  const pending=accounts.filter(account=>account.status==='not_checked'||account.status==='checking').length;
+  const unhealthy=total-healthy-pending;
   el('total').textContent=total;
   el('healthy').textContent=healthy;
   el('unhealthy').textContent=unhealthy;
