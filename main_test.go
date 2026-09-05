@@ -519,6 +519,38 @@ func TestAccountsViewReconcilesDisabledState(t *testing.T) {
 	}
 }
 
+func TestAccountsViewUnavailableIsProbedNotDisabled(t *testing.T) {
+	// CPA's "unavailable" flag is transient (quota cooldown, post-restart
+	// token loading, ...). It must NOT short-circuit the probe the way a
+	// manually-disabled credential does; the health monitor should still
+	// verify the credential independently and show the real result.
+	host := &fakeHost{
+		files: []AuthFile{
+			{AuthIndex: "idx-1", Type: "codex", Email: "cool@example.com", Unavailable: true},
+		},
+		auth: map[string]json.RawMessage{
+			"idx-1": authJSON(1, "account-1"),
+		},
+	}
+	runtime := newConfiguredRuntime(t, host)
+	record := waitForRun(t, runtime)
+	if record.Total != 1 || record.Healthy != 1 || record.Unhealthy != 0 {
+		t.Fatalf("unavailable credential should still be probed: %+v", record)
+	}
+	if got := record.Accounts[0]; got.Status != "healthy" || !got.Healthy || got.ErrorCode != "" {
+		t.Fatalf("run result = %+v, want healthy with no error", got)
+	}
+
+	views, err := runtime.Accounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := viewByAuthIndex(views, "idx-1")
+	if view.Status != "healthy" || !view.Healthy || !view.Unavailable || view.Disabled {
+		t.Fatalf("view = %+v, want healthy with Unavailable flag set and not disabled", view)
+	}
+}
+
 func TestConcurrentScheduleUpdatesAreSafe(t *testing.T) {
 	host := &fakeHost{}
 	runtime := newConfiguredRuntime(t, host)
@@ -557,6 +589,14 @@ func TestManagementRegistrationAndRoutes(t *testing.T) {
 	for input, want := range map[string]string{
 		"/plugins/codex-health-monitor/status":               "/status",
 		"/v0/management/plugins/codex-health-monitor/status": "/status",
+		"/v0/resource/plugins/codex-health-monitor/panel":    "/panel",
+		// The runtime plugin ID comes from the library file name, so it can
+		// carry a platform suffix. Routing must not depend on it.
+		"/v0/resource/plugins/codex-health-monitor-linux-arm64/panel":    "/panel",
+		"/v0/management/plugins/codex-health-monitor-linux-arm64/status": "/status",
+		"/v0/resource/plugins/codex-health-monitor-v0.1.6/panel":         "/panel",
+		"/v0/resource/plugins/codex-health-monitor/panel/":               "/panel",
+		"/v0/resource/plugins/codex-health-monitor/panel?foo=bar":        "/panel",
 		"history/": "/history",
 	} {
 		if got := normalizeManagementPath(input); got != want {
@@ -586,6 +626,15 @@ func TestManagementRegistrationAndRoutes(t *testing.T) {
 	response = handleManagement(managementRequest{Method: "GET", Path: "/v0/resource/plugins/codex-health-monitor/panel"})
 	if response.StatusCode != 200 || !strings.Contains(string(response.Body), "gpt-5.6-luna") {
 		t.Fatalf("unexpected panel response: status=%d", response.StatusCode)
+	}
+	// A library installed under a platform-suffixed name must still serve the panel.
+	response = handleManagement(managementRequest{Method: "GET", Path: "/v0/resource/plugins/codex-health-monitor-linux-arm64/panel"})
+	if response.StatusCode != 200 || !strings.Contains(string(response.Body), "gpt-5.6-luna") {
+		t.Fatalf("unexpected panel response for suffixed plugin id: status=%d", response.StatusCode)
+	}
+	response = handleManagement(managementRequest{Method: "GET", Path: "/v0/management/plugins/codex-health-monitor-linux-arm64/status"})
+	if response.StatusCode != 200 || !strings.Contains(string(response.Body), probeModel) {
+		t.Fatalf("unexpected status response for suffixed plugin id: status=%d", response.StatusCode)
 	}
 }
 

@@ -174,6 +174,7 @@ tbody tr:hover { background: #fafbfd; }
 .status.healthy { background: var(--green-soft); color: var(--green); }
 .status.bad { background: var(--red-soft); color: var(--red); }
 .status.checking { background: var(--amber-soft); color: var(--amber); }
+.status.neutral { background: var(--gray-soft); color: var(--gray); }
 .http-code { width: max-content; display: inline-flex; min-width: 42px; justify-content: center; justify-self: start; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-subtle); padding: 2px 6px; color: var(--muted-strong); font: 650 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .http-code.ok { border-color: #b9dfca; background: var(--green-soft); color: var(--green); }
 .http-code.fail { border-color: #f0c6c2; background: var(--red-soft); color: var(--red); }
@@ -477,6 +478,7 @@ function escapeHTML(value){return String(value??'').replace(/[&<>'"]/g,ch=>({'&'
 function dateText(value){if(!value||String(value).startsWith('0001-'))return '-';const date=new Date(value);return Number.isNaN(date.getTime())?'-':date.toLocaleString('zh-CN',{hour12:false})}
 function statusLabel(value){const labels={healthy:'健康',unauthorized:'未授权',payment_required:'额度异常',forbidden:'账号被拒绝',rate_limited:'限流',upstream_error:'上游异常',network_error:'网络异常',timeout:'超时',response_error:'响应异常',credential_error:'凭证异常',request_error:'请求异常',unexpected_output:'输出异常',disabled:'已停用',not_checked:'未检测',checking:'检测中'};return labels[value]||value||'未知'}
 function statusHTML(row){const cls=row.healthy?'healthy':(row.status==='checking'||row.status==='not_checked'?'checking':'bad');return '<span class="status '+cls+'"><span class="status-dot"></span>'+escapeHTML(statusLabel(row.status))+'</span>'}
+function cooldownHTML(row){return (row.unavailable&&row.status!=='disabled')?'<span class="status neutral" title="CPA 标记该凭证临时不可用（配额冷却或重启后未加载等），不影响本次健康检测结论"><span class="status-dot"></span>冷却中</span>':''}
 function httpHTML(status){const value=Number(status)||0;if(!value)return '<span class="http-code">-</span>';const cls=value>=200&&value<300?'ok':'fail';return '<span class="http-code '+cls+'">'+value+'</span>'}
 function latencyText(value){const latency=Number(value)||0;return latency>0?latency.toLocaleString('zh-CN')+' ms':'-'}
 function emptyHTML(columns,message,icon){return '<tr><td colspan="'+columns+'" class="empty"><span class="empty-state"><svg class="icon" aria-hidden="true"><use href="#'+icon+'"/></svg>'+escapeHTML(message)+'</span></td></tr>'}
@@ -503,7 +505,7 @@ function renderAccounts(accounts){
       '<td class="account-cell" data-label="账号"><div class="account"><span class="account-avatar">'+escapeHTML(avatar)+'</span><span class="account-email">'+escapeHTML(email)+'</span></div></td>'+
       '<td data-label="Auth index"><span class="mono code-value" title="'+escapeHTML(account.auth_index||'')+'">'+escapeHTML(account.auth_index||'-')+'</span></td>'+
       '<td data-label="账号 ID"><span class="mono code-value" title="'+escapeHTML(account.account_id||'')+'">'+escapeHTML(account.account_id||'-')+'</span></td>'+
-      '<td data-label="状态">'+statusHTML(account)+'</td>'+
+      '<td data-label="状态">'+statusHTML(account)+cooldownHTML(account)+'</td>'+
       '<td data-label="HTTP">'+httpHTML(account.http_status)+'</td>'+
       '<td class="latency" data-label="耗时">'+latencyText(account.latency_ms)+'</td>'+
       '<td class="date" data-label="检测时间">'+dateText(account.checked_at)+'</td>'+
@@ -519,7 +521,7 @@ function renderHistory(history){
       '<td class="date" data-label="运行时间">'+dateText(run.started_at)+'</td>'+
       '<td data-label="触发方式">'+escapeHTML(run.trigger==='manual'?'手动':'定时')+'</td>'+
       '<td data-label="账号"><span class="account-email">'+escapeHTML(account.email||('#'+account.auth_index))+'</span></td>'+
-      '<td data-label="状态">'+statusHTML(account)+'</td>'+
+      '<td data-label="状态">'+statusHTML(account)+cooldownHTML(account)+'</td>'+
       '<td data-label="HTTP">'+httpHTML(account.http_status)+'</td>'+
       '<td class="latency" data-label="耗时">'+latencyText(account.latency_ms)+'</td>'+
       '<td data-label="错误原因"><span class="error-message" title="'+escapeHTML(account.error_message||'')+'">'+escapeHTML(account.error_message||'-')+'</span></td>'+

@@ -192,6 +192,7 @@ type AccountView struct {
 	ErrorCode    string    `json:"error_code,omitempty"`
 	ErrorMessage string    `json:"error_message,omitempty"`
 	Disabled     bool      `json:"disabled"`
+	Unavailable  bool      `json:"unavailable"`
 }
 
 type RunRecord struct {
@@ -754,8 +755,13 @@ func (r *Runtime) probeAccount(parent context.Context, account AuthFile, timeout
 		result.ErrorMessage = message
 		return result
 	}
-	if account.Disabled || account.Unavailable {
-		return finish("disabled", "credential_disabled", "Credential is disabled or unavailable in CPA.", false, 0)
+	// Only an explicitly disabled credential is skipped. CPA's "unavailable"
+	// flag marks transient states (quota cooldown, token not loaded after a
+	// restart, etc.) and must NOT short-circuit the probe: the whole point of
+	// a health monitor is to verify the credential independently of CPA's
+	// routing/cooldown state.
+	if account.Disabled {
+		return finish("disabled", "credential_disabled", "Credential is disabled in CPA.", false, 0)
 	}
 	ctx, cancel := context.WithTimeout(parent, time.Duration(timeoutSec)*time.Second)
 	defer cancel()
@@ -1031,7 +1037,12 @@ func (r *Runtime) Accounts() ([]AccountView, error) {
 	}
 	views := make([]AccountView, 0, len(files))
 	for _, file := range files {
-		view := AccountView{Email: file.Email, AuthIndex: file.AuthIndex, Status: "not_checked", Disabled: file.Disabled || file.Unavailable}
+		// Disabled reflects ONLY an operator-manually-disabled credential
+		// (auth file's "disabled": true). CPA's runtime "unavailable" flag is
+		// transient (quota cooldown, post-restart token loading, etc.) and is
+		// exposed separately as informational metadata; it never overrides the
+		// real probe result shown to the user.
+		view := AccountView{Email: file.Email, AuthIndex: file.AuthIndex, Status: "not_checked", Disabled: file.Disabled, Unavailable: file.Unavailable}
 		if result, ok := latestByIndex[file.AuthIndex]; ok {
 			view.AccountID = result.AccountID
 			view.Status = result.Status
@@ -1043,14 +1054,14 @@ func (r *Runtime) Accounts() ([]AccountView, error) {
 			view.ErrorMessage = result.ErrorMessage
 		}
 		if view.Disabled {
-			// The credential is disabled or unavailable in CPA right now, so
-			// reflect that immediately instead of a possibly stale check result.
+			// The credential is manually disabled in CPA right now, so reflect
+			// that immediately instead of a possibly stale check result.
 			view.Status = "disabled"
 			view.Healthy = false
 			view.HTTPStatus = 0
 			view.LatencyMS = 0
 			view.ErrorCode = "credential_disabled"
-			view.ErrorMessage = "Credential is disabled or unavailable in CPA."
+			view.ErrorMessage = "Credential is disabled in CPA."
 		} else if view.Status == "disabled" {
 			// The last check ran while the credential was disabled, but it has
 			// been re-enabled since. That result no longer reflects reality,

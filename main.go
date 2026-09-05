@@ -67,7 +67,7 @@ const (
 	abiVersion = 1
 )
 
-var pluginVersion = "0.1.6"
+var pluginVersion = "0.1.7"
 
 type envelope struct {
 	OK     bool            `json:"ok"`
@@ -292,7 +292,7 @@ func handleManagement(req managementRequest) managementResponse {
 	}
 	path := normalizeManagementPath(req.Path)
 	switch {
-	case req.Method == http.MethodGet && path == "/panel":
+	case req.Method == http.MethodGet && isPanelPath(path):
 		return managementResponse{
 			StatusCode: http.StatusOK,
 			Headers:    map[string][]string{"Content-Type": {"text/html; charset=utf-8"}, "Cache-Control": {"no-store"}},
@@ -343,25 +343,56 @@ func handleManagement(req managementRequest) managementResponse {
 	}
 }
 
-func normalizeManagementPath(path string) string {
-	path = strings.TrimSpace(path)
-	for _, prefix := range []string{
-		"/v0/resource/plugins/codex-health-monitor",
-		"/v0/management/plugins/codex-health-monitor",
-		"/plugins/codex-health-monitor",
-	} {
-		if strings.HasPrefix(path, prefix) {
-			path = strings.TrimPrefix(path, prefix)
-			break
-		}
+// knownManagementPrefixes lists host-side prefixes whose next path segment is
+// always the runtime plugin ID. The ID comes from the shared library file name,
+// so it is not necessarily pluginName (codex-health-monitor-linux-arm64.so
+// yields the ID "codex-health-monitor-linux-arm64"). Dropping that whole
+// segment keeps routing correct however the library was named on disk.
+var knownManagementPrefixes = []string{
+	"/v0/resource/plugins/",
+	"/v0/management/plugins/",
+	"/plugins/",
+	"/v0/management/",
+}
+
+// normalizeManagementPath reduces a host-supplied request path to the plugin
+// relative path, for example "/status" or "/panel".
+func normalizeManagementPath(rawPath string) string {
+	path := strings.TrimSpace(rawPath)
+	if cut := strings.IndexAny(path, "?#"); cut >= 0 {
+		path = path[:cut]
 	}
+	for _, prefix := range knownManagementPrefixes {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(path, prefix)
+		if slash := strings.Index(rest, "/"); slash >= 0 {
+			path = rest[slash:]
+		} else {
+			path = "/"
+		}
+		break
+	}
+	path = strings.TrimRight(path, "/")
 	if path == "" {
 		return "/"
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	return strings.TrimSuffix(path, "/")
+	return path
+}
+
+// isPanelPath reports whether a normalized path should serve the panel page.
+// "/0" covers hosts or UI routes that address the resource by menu index.
+func isPanelPath(path string) bool {
+	switch path {
+	case "/", "/panel", "/index.html", "/0":
+		return true
+	default:
+		return false
+	}
 }
 
 func currentRuntime() *Runtime {
