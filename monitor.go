@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,7 +25,18 @@ const (
 	maxHistory      = 100
 	stateFileName   = "state.json"
 	historyFileName = "history.json"
+
+	// jitterMaxMinutes is the largest random delay, in minutes, added on top
+	// of the configured interval so scheduled checks do not repeat at an
+	// exactly fixed period.
+	jitterMaxMinutes = 5
 )
+
+// intervalJitter returns a random duration in [0, jitterMaxMinutes] minutes.
+// It is a variable so tests can pin it if needed.
+var intervalJitter = func() time.Duration {
+	return time.Duration(rand.IntN(jitterMaxMinutes*60+1)) * time.Second
+}
 
 var ErrRunInProgress = errors.New("health check already running")
 
@@ -522,7 +534,7 @@ func nextRunAfter(schedule ScheduleConfig, now time.Time) (time.Time, error) {
 		return time.Time{}, err
 	}
 	if schedule.Mode == "interval" {
-		return now.Add(time.Duration(schedule.IntervalMin) * time.Minute), nil
+		return now.Add(time.Duration(schedule.IntervalMin)*time.Minute + intervalJitter()), nil
 	}
 	times, err := parseDailyTimes(schedule.DailyTimes)
 	if err != nil {

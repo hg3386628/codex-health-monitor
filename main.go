@@ -67,7 +67,7 @@ const (
 	abiVersion = 1
 )
 
-var pluginVersion = "0.1.2"
+var pluginVersion = "0.1.4"
 
 type envelope struct {
 	OK     bool            `json:"ok"`

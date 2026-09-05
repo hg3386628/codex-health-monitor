@@ -309,8 +309,12 @@ func TestScheduleCalculationAndNormalization(t *testing.T) {
 	interval := defaultSchedule()
 	interval.IntervalMin = 45
 	next, err := nextRunAfter(interval, now)
-	if err != nil || !next.Equal(now.Add(45*time.Minute)) {
-		t.Fatalf("interval next = %v, %v", next, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := now.Add(45 * time.Minute)
+	if next.Before(base) || next.After(base.Add(jitterMaxMinutes*time.Minute)) {
+		t.Fatalf("interval next = %v, want within [%v, %v]", next, base, base.Add(jitterMaxMinutes*time.Minute))
 	}
 
 	daily := defaultSchedule()
@@ -331,6 +335,45 @@ func TestScheduleCalculationAndNormalization(t *testing.T) {
 	want := time.Date(2026, 8, 27, 9, 0, 0, 0, location)
 	if !next.Equal(want) {
 		t.Fatalf("daily next = %v, want %v", next, want)
+	}
+}
+
+func TestIntervalScheduleAddsRandomJitter(t *testing.T) {
+	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	schedule := defaultSchedule()
+	schedule.IntervalMin = 30
+	base := now.Add(30 * time.Minute)
+	seen := make(map[time.Duration]bool)
+	for i := 0; i < 100; i++ {
+		next, err := nextRunAfter(schedule, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		offset := next.Sub(base)
+		if offset < 0 || offset > jitterMaxMinutes*time.Minute {
+			t.Fatalf("next = %v, jitter offset = %v, want within [0, %v]", next, offset, jitterMaxMinutes*time.Minute)
+		}
+		seen[offset] = true
+	}
+	if len(seen) < 10 {
+		t.Fatalf("jitter produced only %d distinct offsets across 100 runs, expected meaningful randomization", len(seen))
+	}
+
+	// daily_times mode keeps exact wall-clock times and must not jitter.
+	daily := defaultSchedule()
+	daily.Mode = "daily_times"
+	daily.DailyTimes = "09:00"
+	location, _ := time.LoadLocation(daily.Timezone)
+	at := time.Date(2026, 8, 27, 8, 0, 0, 0, location)
+	want := time.Date(2026, 8, 27, 9, 0, 0, 0, location)
+	for i := 0; i < 10; i++ {
+		next, err := nextRunAfter(daily, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !next.Equal(want) {
+			t.Fatalf("daily next = %v, want %v (daily_times must not jitter)", next, want)
+		}
 	}
 }
 
