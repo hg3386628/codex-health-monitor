@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -220,6 +221,7 @@ type Runtime struct {
 
 	mu           sync.RWMutex
 	persistMu    sync.Mutex
+	schedMu      sync.Mutex
 	state        persistedState
 	history      []RunRecord
 	running      bool
@@ -555,6 +557,12 @@ func nextRunAfter(schedule ScheduleConfig, now time.Time) (time.Time, error) {
 }
 
 func (r *Runtime) restartScheduler() {
+	// schedMu serializes restart attempts so overlapping
+	// reconfigurations cannot orphan a scheduler goroutine: each
+	// caller observes and tears down the previous worker before
+	// installing its own.
+	r.schedMu.Lock()
+	defer r.schedMu.Unlock()
 	r.mu.Lock()
 	oldCancel := r.workerCancel
 	oldDone := r.workerDone
@@ -788,7 +796,7 @@ func (r *Runtime) probeAccount(parent context.Context, account AuthFile, timeout
 			"Accept":             {"text/event-stream"},
 			"Originator":         {"codex-tui"},
 			"Chatgpt-Account-Id": {material.AccountID},
-			"User-Agent":         {"codex-tui/0.146.0 (Linux; arm64)"},
+			"User-Agent":         {fmt.Sprintf("codex-tui/0.146.0 (Linux; %s)", runtime.GOARCH)},
 			"Connection":         {"keep-alive"},
 		},
 		Body: body,
@@ -1082,18 +1090,22 @@ func (r *Runtime) Stop() {
 func (r *Runtime) load() {
 	if raw, err := os.ReadFile(filepath.Join(r.dataDir, stateFileName)); err == nil {
 		var state persistedState
-		if json.Unmarshal(raw, &state) == nil {
-			if normalized, normalizeErr := normalizeSchedule(state.Schedule); normalizeErr == nil {
-				state.Schedule = normalized
-				state.Running = false
-				r.state = state
-				r.stateLoaded = true
-			}
+		if jsonErr := json.Unmarshal(raw, &state); jsonErr != nil {
+			r.host.Log(context.Background(), "warn", "Codex health state could not be parsed, using defaults", map[string]any{"error_code": "state_parse_failed"})
+		} else if normalized, normalizeErr := normalizeSchedule(state.Schedule); normalizeErr != nil {
+			r.host.Log(context.Background(), "warn", "Codex health schedule in state is invalid, using defaults", map[string]any{"error_code": "state_schedule_invalid"})
+		} else {
+			state.Schedule = normalized
+			state.Running = false
+			r.state = state
+			r.stateLoaded = true
 		}
 	}
 	if raw, err := os.ReadFile(filepath.Join(r.dataDir, historyFileName)); err == nil {
 		var history []RunRecord
-		if json.Unmarshal(raw, &history) == nil {
+		if jsonErr := json.Unmarshal(raw, &history); jsonErr != nil {
+			r.host.Log(context.Background(), "warn", "Codex health history could not be parsed, starting empty", map[string]any{"error_code": "history_parse_failed"})
+		} else {
 			if len(history) > maxHistory {
 				history = history[len(history)-maxHistory:]
 			}

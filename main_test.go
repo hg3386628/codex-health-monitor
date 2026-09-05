@@ -519,6 +519,33 @@ func TestAccountsViewReconcilesDisabledState(t *testing.T) {
 	}
 }
 
+func TestConcurrentScheduleUpdatesAreSafe(t *testing.T) {
+	host := &fakeHost{}
+	runtime := newConfiguredRuntime(t, host)
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			schedule := defaultSchedule()
+			schedule.IntervalMin = 30 + (n % 10)
+			if err := runtime.UpdateSchedule(schedule); err != nil {
+				t.Errorf("UpdateSchedule failed: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	runtime.mu.RLock()
+	next := runtime.state.NextRunAt
+	runtime.mu.RUnlock()
+	if next.IsZero() {
+		t.Fatal("NextRunAt should be set after schedule updates")
+	}
+	// Stop must not hang even after concurrent restarts; a second Stop is a no-op.
+	runtime.Stop()
+	runtime.Stop()
+}
+
 func TestManagementRegistrationAndRoutes(t *testing.T) {
 	registration := managementRegistrationPayload()
 	if len(registration.Routes) != 6 || len(registration.Resources) != 1 {

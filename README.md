@@ -152,7 +152,7 @@ dist/codex-health-monitor-linux-arm64.so
 可通过环境变量覆盖版本、目标架构和 Go 镜像。目标架构支持 `arm64` 和 `amd64`：
 
 ```bash
-VERSION=0.1.5 ARCH=amd64 GO_IMAGE=golang:1.24-bookworm ./build.sh
+VERSION=0.1.6 ARCH=amd64 GO_IMAGE=golang:1.24-bookworm ./build.sh
 ```
 
 构建 arm64：
