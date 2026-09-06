@@ -40,7 +40,7 @@ body {
   font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { color: inherit; }
 svg { display: block; }
 .icon { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -149,7 +149,7 @@ svg { display: block; }
 }
 .button:hover { border-color: #aeb6c0; background: var(--surface-subtle); }
 .button:active { transform: translateY(1px); }
-.button:focus-visible, input:focus-visible { outline: 3px solid rgba(23, 104, 212, .18); outline-offset: 1px; border-color: var(--primary); }
+.button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid rgba(23, 104, 212, .18); outline-offset: 1px; border-color: var(--primary); }
 .button.primary { border-color: var(--primary); background: var(--primary); color: #ffffff; }
 .button.primary:hover { border-color: var(--primary-hover); background: var(--primary-hover); }
 .button:disabled { opacity: .56; cursor: not-allowed; transform: none; }
@@ -157,6 +157,11 @@ svg { display: block; }
 .button.is-loading .icon { animation: spin .8s linear infinite; }
 
 .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-sm); }
+.history-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; color: var(--muted-strong); font-size: 12px; }
+.history-pagination-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.history-page-size { display: inline-flex; align-items: center; gap: 6px; }
+.history-page-size select { height: 34px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--text); padding: 0 8px; }
+.history-pagination .button { min-height: 34px; padding: 0 10px; }
 table { width: 100%; min-width: 980px; border-collapse: collapse; }
 th, td { padding: 12px 14px; border-bottom: 1px solid #e8ebee; text-align: left; vertical-align: middle; }
 th { background: var(--surface-subtle); color: var(--muted-strong); font-size: 11px; font-weight: 720; text-transform: uppercase; white-space: nowrap; }
@@ -402,6 +407,15 @@ tbody tr:hover { background: #fafbfd; }
         <tbody id="history"><tr><td colspan="7" class="empty"><span class="empty-state"><svg class="icon" aria-hidden="true"><use href="#i-inbox"/></svg>暂无检测记录</span></td></tr></tbody>
       </table>
     </div>
+    <nav class="history-pagination" aria-label="检测历史分页">
+      <span id="historyRange" role="status" aria-live="polite">共 0 条账号记录</span>
+      <div class="history-pagination-controls">
+        <label class="history-page-size" for="historyPageSize">每页<select id="historyPageSize"><option value="10">10 条</option><option value="20">20 条</option><option value="50">50 条</option></select></label>
+        <button class="button" id="historyPrev" type="button" aria-controls="history" disabled>上一页</button>
+        <span id="historyPageInfo">第 1 / 1 页</span>
+        <button class="button" id="historyNext" type="button" aria-controls="history" disabled>下一页</button>
+      </div>
+    </nav>
   </section>
 </main>
 
@@ -418,10 +432,13 @@ tbody tr:hover { background: #fafbfd; }
 </div>
 
 <script>
-const API='/v0/management/plugins/codex-health-monitor';
+const API=(()=>{const match=location.pathname.match(/\/plugins\/([^/]+)/);return '/v0/management/plugins/'+(match?decodeURIComponent(match[1]):'codex-health-monitor')})();
 const SESSION_KEY='codex-health-monitor:admin-key';
 const el=id=>document.getElementById(id);
 let loadInFlight=false;
+let historyRows=[];
+let historyPage=1;
+let historyPageSize=10;
 
 function decodeManagerStorage(value){
   if(!value||!value.startsWith('enc::v1::'))return value;
@@ -515,8 +532,18 @@ function renderAccounts(accounts){
 }
 
 function renderHistory(history){
-  const rows=[];
-  history.forEach(run=>(run.accounts||[]).forEach(account=>rows.push(
+  historyRows=history.flatMap(run=>run.error_code&&!(run.accounts||[]).length?[{run,account:{}}]:(run.accounts||[]).map(account=>({run,account})));
+  el('historyMeta').textContent=history.length?history.length+' 次运行 · '+historyRows.length+' 条账号记录':'最多保留 100 次运行记录';
+  renderHistoryPage();
+}
+
+function renderHistoryPage(){
+  const total=historyRows.length;
+  const pageCount=Math.max(1,Math.ceil(total/historyPageSize));
+  historyPage=Math.max(1,Math.min(historyPage,pageCount));
+  const start=(historyPage-1)*historyPageSize;
+  const rows=historyRows.slice(start,start+historyPageSize).map(({run,account})=>
+    run.error_code && !(run.accounts||[]).length ? '<tr><td class="date" data-label="运行时间">'+dateText(run.started_at)+'</td><td data-label="触发方式">'+escapeHTML(run.trigger==='manual'?'手动':'定时')+'</td><td data-label="账号">-</td><td data-label="状态">'+statusHTML({status:'response_error',healthy:false})+'</td><td data-label="HTTP">-</td><td class="latency" data-label="耗时">-</td><td data-label="错误原因"><span class="error-message" title="'+escapeHTML(run.error_message||run.error_code)+'">'+escapeHTML(run.error_message||run.error_code)+'</span></td></tr>' :
     '<tr>'+
       '<td class="date" data-label="运行时间">'+dateText(run.started_at)+'</td>'+
       '<td data-label="触发方式">'+escapeHTML(run.trigger==='manual'?'手动':'定时')+'</td>'+
@@ -526,9 +553,12 @@ function renderHistory(history){
       '<td class="latency" data-label="耗时">'+latencyText(account.latency_ms)+'</td>'+
       '<td data-label="错误原因"><span class="error-message" title="'+escapeHTML(account.error_message||'')+'">'+escapeHTML(account.error_message||'-')+'</span></td>'+
     '</tr>'
-  )));
+  );
   el('history').innerHTML=rows.length?rows.join(''):emptyHTML(7,'暂无检测记录','i-inbox');
-  el('historyMeta').textContent=history.length?history.length+' 次运行 · '+rows.length+' 条账号记录':'最多保留 100 次运行记录';
+  el('historyRange').textContent=total?'第 '+(start+1)+'–'+Math.min(start+historyPageSize,total)+' 条，共 '+total+' 条账号记录':'共 0 条账号记录';
+  el('historyPageInfo').textContent='第 '+historyPage+' / '+pageCount+' 页';
+  el('historyPrev').disabled=historyPage<=1;
+  el('historyNext').disabled=historyPage>=pageCount;
 }
 
 function selectedMode(){const checked=document.querySelector('input[name="scheduleMode"]:checked');return checked?checked.value:'interval'}
@@ -596,6 +626,9 @@ async function load(){
 
 document.querySelectorAll('input[name="scheduleMode"]').forEach(node=>node.addEventListener('change',toggleMode));
 el('refresh').addEventListener('click',load);
+el('historyPrev').addEventListener('click',()=>{historyPage--;renderHistoryPage()});
+el('historyNext').addEventListener('click',()=>{historyPage++;renderHistoryPage()});
+el('historyPageSize').addEventListener('change',()=>{historyPageSize=Number(el('historyPageSize').value);historyPage=1;renderHistoryPage()});
 el('run').addEventListener('click',async()=>{
   setButtonLoading(el('run'),true,el('runLabel'),'检测中','立即检测','#i-play');
   try{await api('/run',{method:'POST',body:'{}'});showNotice('检测已启动');await load()}catch(error){handleActionError(error);setButtonLoading(el('run'),false,el('runLabel'),'检测中','立即检测','#i-play')}

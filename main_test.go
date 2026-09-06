@@ -29,6 +29,7 @@ type fakeHost struct {
 	status       int
 	body         []byte
 	httpErr      error
+	listErr      error
 	block        chan struct{}
 	requestReady chan struct{}
 }
@@ -36,7 +37,7 @@ type fakeHost struct {
 func (h *fakeHost) ListAuthFiles(context.Context) ([]AuthFile, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return append([]AuthFile(nil), h.files...), nil
+	return append([]AuthFile(nil), h.files...), h.listErr
 }
 
 func (h *fakeHost) GetAuth(_ context.Context, authIndex string) (json.RawMessage, error) {

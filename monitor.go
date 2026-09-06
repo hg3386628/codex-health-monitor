@@ -196,14 +196,16 @@ type AccountView struct {
 }
 
 type RunRecord struct {
-	ID         string          `json:"id"`
-	Trigger    string          `json:"trigger"`
-	StartedAt  time.Time       `json:"started_at"`
-	FinishedAt time.Time       `json:"finished_at"`
-	Total      int             `json:"total"`
-	Healthy    int             `json:"healthy"`
-	Unhealthy  int             `json:"unhealthy"`
-	Accounts   []AccountResult `json:"accounts"`
+	ID           string          `json:"id"`
+	Trigger      string          `json:"trigger"`
+	StartedAt    time.Time       `json:"started_at"`
+	FinishedAt   time.Time       `json:"finished_at"`
+	Total        int             `json:"total"`
+	Healthy      int             `json:"healthy"`
+	Unhealthy    int             `json:"unhealthy"`
+	ErrorCode    string          `json:"error_code,omitempty"`
+	ErrorMessage string          `json:"error_message,omitempty"`
+	Accounts     []AccountResult `json:"accounts"`
 }
 
 type persistedState struct {
@@ -658,6 +660,9 @@ func (r *Runtime) StartRun(trigger string) (<-chan struct{}, error) {
 		}
 		r.mu.Unlock()
 		r.persistAll()
+		if record.ErrorCode != "" {
+			r.host.Log(context.Background(), "error", "Codex health check could not discover credentials", map[string]any{"error_code": record.ErrorCode})
+		}
 		r.host.Log(context.Background(), "info", "Codex health check completed", map[string]any{
 			"run_id": record.ID, "trigger": trigger, "total": record.Total, "healthy": record.Healthy, "unhealthy": record.Unhealthy,
 		})
@@ -673,6 +678,10 @@ func (r *Runtime) executeRun(ctx context.Context, trigger string) RunRecord {
 	r.mu.RUnlock()
 	files, err := r.discoverAccounts(ctx, schedule.TargetEmails)
 	if err != nil {
+		record.ErrorCode = "account_discovery_failed"
+		// Keep host details out of persisted state and logs; only expose a stable
+		// actionable message to the management panel.
+		record.ErrorMessage = "CPA could not list Codex credentials."
 		record.FinishedAt = time.Now().UTC()
 		return record
 	}
