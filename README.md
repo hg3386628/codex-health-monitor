@@ -155,7 +155,7 @@ dist/codex-health-monitor-linux-arm64.so
 可通过环境变量覆盖版本、目标架构和 Go 镜像。目标架构支持 `arm64` 和 `amd64`：
 
 ```bash
-VERSION=0.1.7 ARCH=amd64 GO_IMAGE=golang:1.24-bookworm ./build.sh
+VERSION=0.1.9 ARCH=amd64 GO_IMAGE=golang:1.24-bookworm ./build.sh
 ```
 
 构建 arm64：
@@ -205,7 +205,7 @@ POST /v0/management/plugins/codex-health-monitor/schedule
 
 ## 排查
 
-- 插件页面显示 `{"error":"route not found"}`：动态库的文件名必须与插件 ID 一致。CPA 以文件名（去掉扩展名）作为插件 ID，如果直接把 `codex-health-monitor-linux-arm64.so` 放进插件目录，插件 ID 会变成 `codex-health-monitor-linux-arm64`，`plugins.configs` 中的配置块也要使用同样的键名。推荐做法是重命名为 `codex-health-monitor.so`，保持 ID 为 `codex-health-monitor`。
+- 插件页面或浏览器控制台显示 `404` / `{"error":"route not found"}`：先停止 CPA，移除旧版动态库并重新启动。v0.1.9 及以上版本会根据 CPA 传入的实际插件 ID 注册管理路由，因此即使文件名带有架构后缀，面板请求也能正确路由；推荐仍将 Release 文件重命名为 `codex-health-monitor.so`，并使用 `plugins.configs.codex-health-monitor`，这样配置和插件 ID 保持一致。
 - 插件没有出现在列表：确认系统架构是 `linux/arm64` 或 `linux/amd64`，并将对应产物重命名为 `codex-health-monitor.so` 放入相应架构目录，同时检查 `plugins.dir` 与实际挂载路径。
 - 插件存在但未启用：确认全局和实例两个 `enabled` 都为 `true`，然后查看 CPA 启动日志。
 - 页面返回 401：重新输入 `remote-management.secret-key` 对应的管理员密钥。

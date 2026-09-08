@@ -67,7 +67,7 @@ const (
 	abiVersion = 1
 )
 
-var pluginVersion = "0.1.7"
+var pluginVersion = "0.1.9"
 
 type envelope struct {
 	OK     bool            `json:"ok"`
@@ -236,7 +236,7 @@ func dispatch(method string, request []byte) (any, error) {
 		}
 		return registrationPayload(), nil
 	case "management.register":
-		return managementRegistrationPayload(), nil
+		return managementRegistrationPayloadForID(pluginIDFromManagementRequest(request)), nil
 	case "management.handle":
 		var req managementRequest
 		if err := json.Unmarshal(request, &req); err != nil {
@@ -270,19 +270,56 @@ func registrationPayload() registration {
 }
 
 func managementRegistrationPayload() managementRegistration {
+	return managementRegistrationPayloadForID(pluginName)
+}
+
+func managementRegistrationPayloadForID(pluginID string) managementRegistration {
+	pluginID = strings.TrimSpace(pluginID)
+	if pluginID == "" {
+		pluginID = pluginName
+	}
+	routePrefix := "/plugins/" + pluginID
 	return managementRegistration{
 		Routes: []managementRoute{
-			{Method: http.MethodGet, Path: "/plugins/codex-health-monitor/status"},
-			{Method: http.MethodGet, Path: "/plugins/codex-health-monitor/accounts"},
-			{Method: http.MethodGet, Path: "/plugins/codex-health-monitor/history"},
-			{Method: http.MethodPost, Path: "/plugins/codex-health-monitor/run"},
-			{Method: http.MethodGet, Path: "/plugins/codex-health-monitor/schedule"},
-			{Method: http.MethodPost, Path: "/plugins/codex-health-monitor/schedule"},
+			{Method: http.MethodGet, Path: routePrefix + "/status"},
+			{Method: http.MethodGet, Path: routePrefix + "/accounts"},
+			{Method: http.MethodGet, Path: routePrefix + "/history"},
+			{Method: http.MethodPost, Path: routePrefix + "/run"},
+			{Method: http.MethodGet, Path: routePrefix + "/schedule"},
+			{Method: http.MethodPost, Path: routePrefix + "/schedule"},
 		},
 		Resources: []managementResource{
 			{Path: "/panel", Menu: "Codex Health Monitor", Description: "Codex account status, history, and scheduling."},
 		},
 	}
+}
+
+func pluginIDFromManagementRequest(request []byte) string {
+	var payload struct {
+		ResourceBasePath      string `json:"ResourceBasePath"`
+		ResourceBasePathSnake string `json:"resource_base_path"`
+		ResourceBasePathCamel string `json:"resourceBasePath"`
+	}
+	if err := json.Unmarshal(request, &payload); err != nil {
+		return pluginName
+	}
+	basePath := strings.TrimSpace(payload.ResourceBasePath)
+	if basePath == "" {
+		basePath = strings.TrimSpace(payload.ResourceBasePathSnake)
+	}
+	if basePath == "" {
+		basePath = strings.TrimSpace(payload.ResourceBasePathCamel)
+	}
+	const prefix = "/v0/resource/plugins/"
+	basePath = strings.TrimRight(basePath, "/")
+	if !strings.HasPrefix(basePath, prefix) {
+		return pluginName
+	}
+	pluginID := strings.TrimPrefix(basePath, prefix)
+	if pluginID == "" || strings.Contains(pluginID, "/") || strings.ContainsAny(pluginID, "?# \t\r\n") {
+		return pluginName
+	}
+	return pluginID
 }
 
 func handleManagement(req managementRequest) managementResponse {

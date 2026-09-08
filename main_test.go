@@ -639,6 +639,34 @@ func TestManagementRegistrationAndRoutes(t *testing.T) {
 	}
 }
 
+func TestManagementRegistrationUsesHostPluginID(t *testing.T) {
+	for _, request := range []string{
+		`{"ResourceBasePath":"/v0/resource/plugins/codex-health-monitor-linux-amd64"}`,
+		`{"resource_base_path":"/v0/resource/plugins/codex-health-monitor-linux-amd64"}`,
+		`{"resourceBasePath":"/v0/resource/plugins/codex-health-monitor-linux-amd64/"}`,
+	} {
+		value, err := dispatch("management.register", []byte(request))
+		if err != nil {
+			t.Fatalf("dispatch management.register failed: %v", err)
+		}
+		registration, ok := value.(managementRegistration)
+		if !ok || len(registration.Routes) == 0 {
+			t.Fatalf("unexpected registration value: %#v", value)
+		}
+		if got, want := registration.Routes[0].Path, "/plugins/codex-health-monitor-linux-amd64/status"; got != want {
+			t.Fatalf("route path = %q, want %q", got, want)
+		}
+	}
+	value, err := dispatch("management.register", []byte(`{"ResourceBasePath":"/invalid"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registration := value.(managementRegistration)
+	if registration.Routes[0].Path != "/plugins/codex-health-monitor/status" {
+		t.Fatalf("invalid resource base path should use the stable plugin ID: %+v", registration.Routes[0])
+	}
+}
+
 func TestYAMLConfigurationParsing(t *testing.T) {
 	raw := `plugins:
   enabled: true
