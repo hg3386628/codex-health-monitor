@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "要发布或回填资产的 Release tag，例如 v0.1.11"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${INPUT_TAG}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "${tag}" =~ ^v[0-9]+(\.[0-9]+)+$ ]]; then
+            echo "Invalid release tag: ${tag}" >&2
+            exit 1
+          fi
+
+          version="${tag#v}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build Linux shared libraries
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          chmod +x build.sh
+          for arch in amd64 arm64; do
+            VERSION="${VERSION}" ARCH="${arch}" ./build.sh
+          done
+
+      - name: Package CLIProxyAPI plugin-store assets
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          for arch in amd64 arm64; do
+            raw="dist/codex-health-monitor-linux-${arch}.so"
+            package_dir="dist/package-${arch}"
+            zip_name="codex-health-monitor_${VERSION}_linux_${arch}.zip"
+
+            mkdir -p "${package_dir}"
+            cp "${raw}" "${package_dir}/codex-health-monitor.so"
+            (
+              cd "${package_dir}"
+              zip -q "../${zip_name}" codex-health-monitor.so
+            )
+            sha256sum "${raw}" > "${raw}.sha256"
+          done
+
+          (
+            cd dist
+            sha256sum \
+              "codex-health-monitor_${VERSION}_linux_amd64.zip" \
+              "codex-health-monitor_${VERSION}_linux_arm64.zip" \
+              > checksums.txt
+          )
+
+          cat dist/checksums.txt
+
+      - name: Publish or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          store_assets=(
+            "dist/codex-health-monitor_${VERSION}_linux_amd64.zip"
+            "dist/codex-health-monitor_${VERSION}_linux_arm64.zip"
+            "dist/checksums.txt"
+          )
+
+          raw_assets=(
+            "dist/codex-health-monitor-linux-amd64.so"
+            "dist/codex-health-monitor-linux-amd64.so.sha256"
+            "dist/codex-health-monitor-linux-arm64.so"
+            "dist/codex-health-monitor-linux-arm64.so.sha256"
+          )
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            # 对已有 Release（例如 v0.1.11）只回填/更新插件商店资产，
+            # 不覆盖原有裸 .so 下载文件。
+            gh release upload "${TAG}" "${store_assets[@]}" --clobber
+          else
+            gh release create "${TAG}" \
+              "${store_assets[@]}" \
+              "${raw_assets[@]}" \
+              --target "${GITHUB_SHA}" \
+              --title "${TAG}" \
+              --generate-notes
+          fi

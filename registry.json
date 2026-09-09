@@ -6,13 +6,14 @@
       "name": "Codex Health Monitor",
       "description": "Independently checks CPA Codex credentials with a strict Responses/SSE completion check.",
       "author": "Cai Feng",
-      "version": "0.1.11",
       "repository": "https://github.com/hg3386628/codex-health-monitor",
-      "platforms": [
-        "linux/arm64",
-        "linux/amd64"
-      ],
-      "entrypoint": "codex-health-monitor.so"
+      "homepage": "https://github.com/hg3386628/codex-health-monitor",
+      "license": "MIT",
+      "tags": [
+        "Management",
+        "Monitoring",
+        "Codex"
+      ]
     }
   ]
 }
