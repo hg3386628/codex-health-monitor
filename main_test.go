@@ -579,6 +579,50 @@ func TestConcurrentScheduleUpdatesAreSafe(t *testing.T) {
 	runtime.Stop()
 }
 
+func TestUnchangedReconfigurePreservesScheduledRun(t *testing.T) {
+	previousJitter := intervalJitter
+	intervalJitter = func() time.Duration { return 0 }
+	t.Cleanup(func() { intervalJitter = previousJitter })
+
+	runtime := NewRuntime(&fakeHost{}, t.TempDir())
+	t.Cleanup(runtime.Stop)
+	configYAML := `plugins:
+  configs:
+    codex-health-monitor:
+      schedule_mode: interval
+      interval_min: 30
+      timezone: Asia/Shanghai
+      timeout_sec: 30
+`
+	if err := runtime.Configure(configYAML, false); err != nil {
+		t.Fatal(err)
+	}
+
+	var first time.Time
+	deadline := time.Now().Add(time.Second)
+	for first.IsZero() && time.Now().Before(deadline) {
+		runtime.mu.RLock()
+		first = runtime.state.NextRunAt
+		runtime.mu.RUnlock()
+		if first.IsZero() {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if first.IsZero() {
+		t.Fatal("initial scheduler did not set NextRunAt")
+	}
+
+	if err := runtime.Configure(configYAML, true); err != nil {
+		t.Fatal(err)
+	}
+	runtime.mu.RLock()
+	second := runtime.state.NextRunAt
+	runtime.mu.RUnlock()
+	if !second.Equal(first) {
+		t.Fatalf("unchanged reconfigure moved NextRunAt from %v to %v", first, second)
+	}
+}
+
 func TestManagementRegistrationAndRoutes(t *testing.T) {
 	registration := managementRegistrationPayload()
 	if len(registration.Routes) != 6 || len(registration.Resources) != 1 {

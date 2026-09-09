@@ -288,12 +288,17 @@ func (r *Runtime) Configure(configYAML string, force bool) error {
 		return err
 	}
 	r.mu.Lock()
+	scheduleChanged := !r.configured || r.state.Schedule != normalized
 	r.state.Schedule = normalized
 	r.configured = true
-	r.state.UpdatedAt = time.Now().UTC()
+	if scheduleChanged {
+		r.state.UpdatedAt = time.Now().UTC()
+	}
 	r.mu.Unlock()
-	r.restartScheduler()
-	r.persistState()
+	if scheduleChanged {
+		r.restartScheduler()
+		r.persistState()
+	}
 	return nil
 }
 
