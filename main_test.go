@@ -25,6 +25,7 @@ type fakeHost struct {
 	files        []AuthFile
 	auth         map[string]json.RawMessage
 	requests     []HostHTTPRequest
+	requestTimes []time.Time
 	logs         []string
 	status       int
 	body         []byte
@@ -53,6 +54,7 @@ func (h *fakeHost) GetAuth(_ context.Context, authIndex string) (json.RawMessage
 func (h *fakeHost) HTTPDo(ctx context.Context, request HostHTTPRequest) (HostHTTPResponse, error) {
 	h.mu.Lock()
 	h.requests = append(h.requests, request)
+	h.requestTimes = append(h.requestTimes, time.Now())
 	ready := h.requestReady
 	block := h.block
 	status := h.status
@@ -375,6 +377,67 @@ func TestIntervalScheduleAddsRandomJitter(t *testing.T) {
 		if !next.Equal(want) {
 			t.Fatalf("daily next = %v, want %v (daily_times must not jitter)", next, want)
 		}
+	}
+}
+
+func TestScheduledRunAddsIndependentAccountJitter(t *testing.T) {
+	previousJitter := accountJitter
+	var jitterMu sync.Mutex
+	delays := []time.Duration{0, 120 * time.Millisecond, 240 * time.Millisecond}
+	jitterCalls := 0
+	accountJitter = func() time.Duration {
+		jitterMu.Lock()
+		defer jitterMu.Unlock()
+		delay := delays[jitterCalls]
+		jitterCalls++
+		return delay
+	}
+	t.Cleanup(func() { accountJitter = previousJitter })
+
+	host := &fakeHost{
+		files: []AuthFile{
+			{AuthIndex: "idx-1", Type: "codex", Email: "one@example.com"},
+			{AuthIndex: "idx-2", Type: "codex", Email: "two@example.com"},
+			{AuthIndex: "idx-3", Type: "codex", Email: "three@example.com"},
+		},
+		auth: map[string]json.RawMessage{
+			"idx-1": authJSON(1, "account-1"),
+			"idx-2": authJSON(2, "account-2"),
+			"idx-3": authJSON(3, "account-3"),
+		},
+	}
+	runtime := newConfiguredRuntime(t, host)
+	started := time.Now()
+	done, err := runtime.StartRun("scheduled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("scheduled health check did not complete")
+	}
+
+	jitterMu.Lock()
+	if jitterCalls != len(delays) {
+		t.Fatalf("account jitter called %d times, want %d", jitterCalls, len(delays))
+	}
+	jitterMu.Unlock()
+	host.mu.Lock()
+	times := append([]time.Time(nil), host.requestTimes...)
+	host.mu.Unlock()
+	if len(times) != len(delays) {
+		t.Fatalf("got %d account requests, want %d", len(times), len(delays))
+	}
+	sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
+	if times[0].Sub(started) > 100*time.Millisecond {
+		t.Fatalf("first account request started too late: %v", times[0].Sub(started))
+	}
+	if times[len(times)-1].Sub(started) < 200*time.Millisecond {
+		t.Fatalf("last account request started too early: %v", times[len(times)-1].Sub(started))
+	}
+	if times[len(times)-1].Sub(times[0]) < 180*time.Millisecond {
+		t.Fatalf("account requests were not staggered: span=%v", times[len(times)-1].Sub(times[0]))
 	}
 }
 

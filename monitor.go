@@ -27,17 +27,23 @@ const (
 	stateFileName   = "state.json"
 	historyFileName = "history.json"
 
-	// jitterMaxMinutes is the largest random delay, in minutes, added on top
-	// of the configured interval so scheduled checks do not repeat at an
-	// exactly fixed period.
+	// jitterMaxMinutes is the largest random delay, in minutes, used for the
+	// scheduled run and for each account's independent start offset.
 	jitterMaxMinutes = 5
 )
 
-// intervalJitter returns a random duration in [0, jitterMaxMinutes] minutes.
-// It is a variable so tests can pin it if needed.
-var intervalJitter = func() time.Duration {
+func randomJitter() time.Duration {
 	return time.Duration(rand.IntN(jitterMaxMinutes*60+1)) * time.Second
 }
+
+// intervalJitter returns a random duration in [0, jitterMaxMinutes] minutes.
+// It is a variable so tests can pin it if needed.
+var intervalJitter = randomJitter
+
+// accountJitter returns an independent random duration in
+// [0, jitterMaxMinutes] minutes for a scheduled account probe. It is a
+// variable so tests can pin it if needed.
+var accountJitter = randomJitter
 
 var ErrRunInProgress = errors.New("health check already running")
 
@@ -564,6 +570,20 @@ func nextRunAfter(schedule ScheduleConfig, now time.Time) (time.Time, error) {
 	return time.Time{}, errors.New("unable to calculate next daily run")
 }
 
+func waitForDelay(ctx context.Context, delay time.Duration) bool {
+	if delay <= 0 {
+		return true
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 func (r *Runtime) restartScheduler() {
 	// schedMu serializes restart attempts so overlapping
 	// reconfigurations cannot orphan a scheduler goroutine: each
@@ -696,6 +716,12 @@ func (r *Runtime) executeRun(ctx context.Context, trigger string) RunRecord {
 		wg.Add(1)
 		go func(i int, account AuthFile) {
 			defer wg.Done()
+			if trigger == "scheduled" && !waitForDelay(ctx, accountJitter()) {
+				// Preserve the existing cancellation result semantics by letting
+				// probeAccount classify the already-cancelled context.
+				results[i] = r.probeAccount(ctx, account, schedule.TimeoutSec)
+				return
+			}
 			results[i] = r.probeAccount(ctx, account, schedule.TimeoutSec)
 		}(index, file)
 	}
