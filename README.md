@@ -78,6 +78,65 @@ http://<CPA_HOST>:8317/v0/resource/plugins/codex-health-monitor/panel
 
 首次加载页面会复用 CPA 管理中心中的管理员密钥；密钥失效时，页面会要求重新输入。插件加载后不会立即自动检测，点击“立即检测”可执行第一次检查。
 
+### 通过 CLIProxyAPI 插件源安装
+
+CLIProxyAPI 官方插件仓库和自定义插件源使用统一的 Release 资产格式。插件源中的 `repository` 指向插件 GitHub 仓库后，CPA 会读取该仓库的 latest Release，并根据 Release tag 和当前运行平台选择对应安装包。因此发布新版本时，通常只需要发布新的 Release，不需要同步修改插件源里的版本号。
+
+Release tag 必须使用 `v<version>` 格式，例如：
+
+```text
+v0.1.11
+```
+
+每个受支持的平台需要提供一个 zip，并在同一 Release 中提供统一的 `checksums.txt`。本项目当前支持 Linux amd64 和 arm64，对应资产应为：
+
+```text
+codex-health-monitor_0.1.11_linux_amd64.zip
+codex-health-monitor_0.1.11_linux_arm64.zip
+checksums.txt
+```
+
+zip 根目录必须直接包含与插件 ID 同名的动态库，不能再套子目录：
+
+```text
+codex-health-monitor.so
+```
+
+`checksums.txt` 使用标准 `sha256sum` 格式，并校验平台 zip，而不是裸 `.so`：
+
+```text
+<sha256>  codex-health-monitor_0.1.11_linux_amd64.zip
+<sha256>  codex-health-monitor_0.1.11_linux_arm64.zip
+```
+
+仓库中的 `.github/workflows/release.yml` 会在推送 `v*` tag 时自动构建两个 Linux 架构、保留原有裸 `.so` 下载文件，同时生成上述插件商店兼容 zip 和 `checksums.txt`。对于已经存在的 Release，也可以在 GitHub Actions 的 **Release** workflow 中使用 `workflow_dispatch`，输入已有 tag（例如 `v0.1.11`）回填插件商店资产；这种方式不会覆盖现有裸 `.so` 文件。
+
+自定义插件源可以直接使用仓库根目录的 `registry.json`，其结构如下：
+
+```json
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "codex-health-monitor",
+      "name": "Codex Health Monitor",
+      "description": "Independently checks CPA Codex credentials with a strict Responses/SSE completion check.",
+      "author": "Cai Feng",
+      "repository": "https://github.com/hg3386628/codex-health-monitor",
+      "homepage": "https://github.com/hg3386628/codex-health-monitor",
+      "license": "MIT",
+      "tags": [
+        "Management",
+        "Monitoring",
+        "Codex"
+      ]
+    }
+  ]
+}
+```
+
+如果需要将插件提交到 CLIProxyAPI 官方插件仓库，也应确保 latest Release 已包含上述平台 zip 和 `checksums.txt`，否则插件条目即使能被插件源读取，安装阶段仍会因为找不到或无法校验平台资产而失败。
+
 ### Docker 部署的 CPA
 
 将插件目录和配置文件挂载到 CPA 容器，并保证容器内目录与 `plugins.dir` 一致：
